@@ -56,7 +56,14 @@ impl ProcTree {
     //      - Маркер есть в процессе?
     //          - ДА => отправить себе сообщение МАРКЕР
     //          - НЕТ => отправить ЗАПРОС в направлении маркера
-    fn receive(&mut self, signal: SIGNAL, world: SystemCommunicator, sender: i32) {
+    fn receive(
+        &mut self,
+        signal: SIGNAL,
+        world: SystemCommunicator,
+        sender: i32,
+        iter: i32,
+        size: i32,
+    ) {
         match signal {
             SIGNAL::Marker => {
                 // В случае, если очередь не пуста, то извлекается последний элемент
@@ -77,7 +84,7 @@ impl ProcTree {
                         rooter if self.root == first_in_queue => {
                             println!("SEND TO ROOT {} FROM {}", rooter, self.rk);
                             self.marker = false;
-                            self.to_proc = 1;
+                            self.to_proc = 0;
                             let fname: String = self.rk.to_string() + ".txt";
                             let mut file = OpenOptions::new()
                                 .write(true)
@@ -86,7 +93,7 @@ impl ProcTree {
                                 .unwrap();
 
                             file.write_all(b"Send Marker to root\n")
-                                .expect("Error writing");
+                                .expect("Error logging info");
                             world.process_at_rank(rooter).send(&0)
                         }
                         left if self.left == first_in_queue => {
@@ -101,7 +108,7 @@ impl ProcTree {
                                 .unwrap();
 
                             file.write_all(b"Send Marker to left child\n")
-                                .expect("Error writing");
+                                .expect("Error logging info");
                             world.process_at_rank(left).send(&0)
                         }
                         right if self.right == first_in_queue => {
@@ -116,7 +123,7 @@ impl ProcTree {
                                 .unwrap();
 
                             file.write_all(b"Send Marker to right child\n")
-                                .expect("Error writing");
+                                .expect("Error logging info");
                             world.process_at_rank(right).send(&0)
                         }
                         // Неверно задан автор маркера(не связан с элементом дерева)
@@ -124,7 +131,7 @@ impl ProcTree {
                     }
                     // Если очередь с запросами, то отправить ЗАПРОС в направлении маркера
                     if let Some(top) = self.queue.pop() {
-                        ProcTree::receive(self, SIGNAL::Request, world, top);
+                        ProcTree::receive(self, SIGNAL::Request, world, top, iter, size);
                     }
                 }
             }
@@ -135,7 +142,7 @@ impl ProcTree {
                 println!("Stack of {} is {:?}", self.rk, &self.queue);
                 if self.marker {
                     // Если маркер есть в процессе, отправляем сообщение MARKER себе же
-                    ProcTree::receive(self, SIGNAL::Marker, world, self.rk);
+                    ProcTree::receive(self, SIGNAL::Marker, world, self.rk, iter, size);
                 } else {
                     // Иначе отправляем ЗАПРОС в направлении маркера
                     match self.to_proc {
@@ -148,7 +155,7 @@ impl ProcTree {
                                 .unwrap();
 
                             file.write_all(b"Send Recieve to root\n")
-                                .expect("Error writing");
+                                .expect("Error logging info");
                             world.process_at_rank(self.root).send(&1)
                         }
                         1 => {
@@ -160,7 +167,7 @@ impl ProcTree {
                                 .unwrap();
 
                             file.write_all(b"Send Recieve to left child\n")
-                                .expect("Error writing");
+                                .expect("Error logging info");
                             world.process_at_rank(self.left).send(&1)
                         }
                         2 => {
@@ -172,7 +179,7 @@ impl ProcTree {
                                 .unwrap();
 
                             file.write_all(b"Send Recieve to right child\n")
-                                .expect("Error writing");
+                                .expect("Error logging info");
                             world.process_at_rank(self.right).send(&1)
                         }
                         // Неправильный параметр to_proc(направление маркера)
@@ -206,10 +213,10 @@ impl ProcTree {
             file.write_all(b"Accesed critical section\n")
                 .expect("Error writing");
             File::create("critical.txt").expect("Error creating critical.txt");
-            thread::sleep(Duration::from_secs(5));
+            thread::sleep(Duration::from_secs(1));
             fs::remove_file("critical.txt").expect("Error deleting critical.txt");
         } else {
-            println!("AAAAAAAAAA");
+            println!("Critical file exsisted! ERROR! Terminating...");
             process::abort();
         }
     }
@@ -247,31 +254,6 @@ fn main() {
                 );
             }
             size - 1
-        }
-    };
-
-    // Второй аргумент командной строки указывает, какой процесс будет отправлять запрос
-    let request_sender: i32 = match {
-        if args.get(2).is_none() {
-            String::new()
-        } else {
-            args[2].clone()
-        }
-    }
-    .trim()
-    .parse::<i32>()
-    {
-        Ok(num) => num,
-        Err(_) => {
-            // Если ничего не указано в командной строке,
-            // то request шлет 1-ый процесс(полагаем, что как минимум 2 процесса создаются)
-            if rank == tree_node_proc {
-                println!(
-                    "No number entered, so request sender will be process with rank={}.",
-                    1
-                );
-            }
-            1
         }
     };
 
@@ -325,7 +307,7 @@ fn main() {
         }
     };
 
-    // Напечатаем все дерево от корня к листам через send, receive
+    // Установим корректный маршрут до маркера из всех элементов дерева
     if rank == 0 {
         let fname: String = rank.to_string() + ".txt";
         File::create(fname).expect("Error rank creation file");
@@ -346,8 +328,6 @@ fn main() {
         } else if tree_elem.right != -1 && relative_marker_path == tree_elem.right {
             tree_elem.to_proc = 2;
         }
-
-        println!("{:?}", tree_elem);
     }
     for i in 1..size {
         if rank == i {
@@ -365,7 +345,6 @@ fn main() {
                     tree_elem.to_proc = 2;
                 }
             }
-            println!("{:?}", tree_elem);
 
             if tree_elem.left != -1 {
                 world
@@ -380,44 +359,142 @@ fn main() {
         }
     }
 
-    // Ожидаем все процессы перед работай маркерного алгоритма
-    world.barrier();
+    let mut previous_marker: i32 = marker_node;
+    for request_sender in 0..size {
+        //Ожидаем все процессы после окончания предыдущей итерации цикла для начала новой
+        world.barrier();
 
-    // Основной процесс-запрос - rank=request_sender, поэтому от него отправляем Request
-    if rank == request_sender {
-        tree_elem.receive(SIGNAL::Request, world, rank);
-        let (idx, _) = world.process_at_rank(tree_elem.root).receive::<i32>();
-
-        // idx - информация о типе запроса - либо Marker(idx == 0), либо Request(idx == 0)
-        match idx {
-            0 => tree_elem.receive(SIGNAL::Marker, world, tree_elem.root),
-            1 => tree_elem.receive(SIGNAL::Request, world, tree_elem.root),
-            _ => println!("Invalid msg!"),
+        // Логируем информацию об итерациях
+        let fname: String = tree_elem.rk.to_string() + ".txt";
+        let mut file = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open(fname)
+            .unwrap();
+        if request_sender > 0 {
+            file.write_all(b"####################\n")
+                .expect("Error logging info");
         }
-        // Завершение работы программы и отправка всем процессам специального сигнала
-        println!("Ended {} jod", rank);
-        for i in 0..size {
-            if i != request_sender {
-                world.process_at_rank(i).send(&2);
+
+        let log_info = format!(
+            "####################\nIteration {}/{}\n",
+            request_sender + 1,
+            size
+        );
+        file.write_all(log_info.as_bytes())
+            .expect("Error logging info");
+
+        // Напечатаем все дерево от корня к листам через send, receive
+        if rank == 0 {
+            println!(
+                "\n###############################################
+                Iteration {}/{}. Process tree is:",
+                request_sender + 1,
+                size
+            );
+            if tree_elem.left != -1 {
+                world
+                    .process_at_rank(tree_elem.left)
+                    .send(&tree_elem.marker);
+            }
+            if tree_elem.right != -1 {
+                world
+                    .process_at_rank(tree_elem.right)
+                    .send(&tree_elem.marker);
+            }
+            println!("{:?}", tree_elem);
+        }
+        for i in 1..size {
+            if rank == i {
+                world.process_at_rank(tree_elem.root).receive::<bool>();
+
+                println!("{:?}", tree_elem);
+
+                if tree_elem.left != -1 {
+                    world
+                        .process_at_rank(tree_elem.left)
+                        .send(&tree_elem.marker);
+                }
+                if tree_elem.right != -1 {
+                    world
+                        .process_at_rank(tree_elem.right)
+                        .send(&tree_elem.marker);
+                }
             }
         }
-    } else {
-        // Остальные процессы непрерывно слушают запросы(единственный признак остановки - специальный сигнал inp==2)
-        let mut inp = 1;
-        while inp != 2 {
-            let (inp1, status) = world.any_process().receive::<i32>();
-            inp = inp1;
-            let source: i32 = status.source_rank();
-            match inp {
-                0 => tree_elem.receive(SIGNAL::Marker, world, source),
-                1 => tree_elem.receive(SIGNAL::Request, world, source),
-                2 => {
-                    println!("Ended {} jod", rank);
+
+        // Ожидаем все процессы перед работай маркерного алгоритма
+        world.barrier();
+
+        // Основной процесс-запрос - rank=request_sender, поэтому от него отправляем Request
+        if rank == request_sender {
+            println!("Node with rank {} wants to enter the CRITICAL SECTION. Marker owner is node with rank {}.", rank, previous_marker);
+            tree_elem.receive(SIGNAL::Request, world, rank, request_sender, size);
+            let (idx, _) = match tree_elem.to_proc {
+                0 if tree_elem.to_proc == 0 => {
+                    world.process_at_rank(tree_elem.root).receive::<i32>()
+                }
+                1 if tree_elem.to_proc == 1 => {
+                    world.process_at_rank(tree_elem.left).receive::<i32>()
+                }
+                2 if tree_elem.to_proc == 2 => {
+                    world.process_at_rank(tree_elem.right).receive::<i32>()
+                }
+                _ => {
+                    println!("Invalid MARKER DIRECTION AT NODE {}", rank);
+                    process::abort();
+                }
+            };
+
+            // idx - информация о типе запроса - либо Marker(idx == 0), либо Request(idx == 0)
+            match idx {
+                0 => tree_elem.receive(SIGNAL::Marker, world, tree_elem.root, request_sender, size),
+                1 => {
+                    tree_elem.receive(SIGNAL::Request, world, tree_elem.root, request_sender, size)
                 }
                 _ => println!("Invalid msg!"),
             }
+            // Завершение работы программы и отправка всем процессам специального сигнала
+            for i in 0..size {
+                if i != request_sender {
+                    world.process_at_rank(i).send(&2);
+                }
+            }
+        } else {
+            // Остальные процессы непрерывно слушают запросы(единственный признак остановки - специальный сигнал inp==2)
+            let mut inp = 1;
+            while inp != 2 {
+                let (inp1, status) = world.any_process().receive::<i32>();
+                inp = inp1;
+                let source: i32 = status.source_rank();
+                match inp {
+                    0 => tree_elem.receive(SIGNAL::Marker, world, source, request_sender, size),
+                    1 => tree_elem.receive(SIGNAL::Request, world, source, request_sender, size),
+                    2 => {
+                        //Завершение работы процесса
+                    }
+                    _ => println!("Invalid msg!"),
+                }
+            }
+        }
+        previous_marker = request_sender;
+
+        // Ожидаем окончания работы процессов, выводим окончание итерации
+        world.barrier();
+        if rank == 0 {
+            println!("###############################################");
         }
     }
 
+    // Конец логирования
+    let fname: String = tree_elem.rk.to_string() + ".txt";
+    let mut file = OpenOptions::new()
+        .write(true)
+        .append(true)
+        .open(fname)
+        .unwrap();
+
+    file.write_all(b"####################\n")
+        .expect("Error logging info");
     world.barrier();
 }
