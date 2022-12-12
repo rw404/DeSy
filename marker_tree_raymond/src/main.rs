@@ -308,54 +308,16 @@ fn main() {
     };
 
     // Установим корректный маршрут до маркера из всех элементов дерева
-    if rank == 0 {
-        let fname: String = rank.to_string() + ".txt";
-        File::create(fname).expect("Error rank creation file");
-        if tree_elem.left != -1 {
-            world
-                .process_at_rank(tree_elem.left)
-                .send(&tree_elem.marker);
-        }
-        if tree_elem.right != -1 {
-            world
-                .process_at_rank(tree_elem.right)
-                .send(&tree_elem.marker);
-        }
+    let fname: String = rank.to_string() + ".txt";
+    File::create(fname).expect("Error rank creation file");
+
+    if child_to_path.contains_key(&rank) {
         let relative_marker_path = child_to_path[&rank];
 
         if tree_elem.left != -1 && relative_marker_path == tree_elem.left {
             tree_elem.to_proc = 1;
         } else if tree_elem.right != -1 && relative_marker_path == tree_elem.right {
             tree_elem.to_proc = 2;
-        }
-    }
-    for i in 1..size {
-        if rank == i {
-            let fname: String = rank.to_string() + ".txt";
-            File::create(fname).expect("Error rank creation file");
-
-            world.process_at_rank(tree_elem.root).receive::<bool>();
-
-            if child_to_path.contains_key(&rank) {
-                let relative_marker_path = child_to_path[&rank];
-
-                if tree_elem.left != -1 && relative_marker_path == tree_elem.left {
-                    tree_elem.to_proc = 1;
-                } else if tree_elem.right != -1 && relative_marker_path == tree_elem.right {
-                    tree_elem.to_proc = 2;
-                }
-            }
-
-            if tree_elem.left != -1 {
-                world
-                    .process_at_rank(tree_elem.left)
-                    .send(&tree_elem.marker);
-            }
-            if tree_elem.right != -1 {
-                world
-                    .process_at_rank(tree_elem.right)
-                    .send(&tree_elem.marker);
-            }
         }
     }
 
